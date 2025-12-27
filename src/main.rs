@@ -1,13 +1,21 @@
 use std::fs::DirEntry;
 use std::io::Write;
 use std::path::Path;
+use std::sync::{LazyLock,Mutex};
+static HIDDEN:LazyLock<Mutex<bool>> = LazyLock::new(|| {Mutex::from(false)});
 static SELECTED_DIR:std::sync::LazyLock<std::sync::Mutex<String>> = std::sync::LazyLock::new(|| {std::sync::Mutex::from(String::from(""))});
 fn main() {
+    let args = std::env::args();
+    let mut hidden = HIDDEN.lock().unwrap();
+    *hidden = args.collect::<Vec<String>>().contains(&"-hidden".to_string());
+    drop(hidden);
     let mut current_directory = std::env::home_dir().unwrap().to_str().unwrap().to_string();
     std::env::set_current_dir(&current_directory).unwrap();
     loop {
         clear();
-        let con = get_files(&current_directory, false);
+        let hidden = HIDDEN.lock().unwrap();
+        let con = get_files(&current_directory, *hidden);
+        drop(hidden);
         println!("{}", current_directory);
         show_dir_contents(&con);
         println!();
@@ -101,7 +109,9 @@ fn read(contents:Vec<DirEntry>) -> String {
             return_value = std::env::home_dir().unwrap().as_os_str().to_str().unwrap().to_string();
         }
     }
-
+    else if command[0] == String::from("exit") {
+        std::process::exit(0);
+    }
     else if command[0] == String::from("delete") {
         let check = !(read_to_string(format!("You are trying to delete {} (Y/n)>  ",file_path.as_os_str().display()).as_str()) == "n");
         if file_path.is_dir() && check{
@@ -141,8 +151,9 @@ fn read(contents:Vec<DirEntry>) -> String {
         std::process::Command::new("cp").arg("-r").arg(select.clone()).arg(current_dir).output().unwrap();
     }
     else if command[0] == String::from("move") {
-        let select = SELECTED_DIR.lock().unwrap();
+        let mut select = SELECTED_DIR.lock().unwrap();
         std::process::Command::new("mv").arg(select.clone()).arg(current_dir).output().unwrap();
+        *select = String::from("")
     }
     else if command[0] == String::from("open") {
         std::thread::spawn(|| {std::process::Command::new("kitty").arg("--directory").arg(current_dir).output().unwrap()});
@@ -180,6 +191,11 @@ fn read(contents:Vec<DirEntry>) -> String {
             new_unzip_folder = &current_dir
         }
         zip::ZipArchive::new(std::fs::File::open(file_path.clone()).unwrap()).unwrap().extract(new_unzip_folder).unwrap();
+    }
+    else if command[0] == String::from("hidden") {
+        let mut hid = HIDDEN.lock().unwrap();
+        *hid = !*hid;
+        
     }
     else {
         let mut formated_term_command:Vec<String> = Vec::new();
