@@ -1,9 +1,7 @@
 use std::fs::DirEntry;
 use std::io::Write;
 use std::path::Path;
-
-use cli_clipboard::ClipboardProvider;
-
+static SELECTED_DIR:std::sync::LazyLock<std::sync::Mutex<String>> = std::sync::LazyLock::new(|| {std::sync::Mutex::from(String::from(""))});
 fn main() {
     let mut current_directory = std::env::home_dir().unwrap().to_str().unwrap().to_string();
     std::env::set_current_dir(&current_directory).unwrap();
@@ -107,11 +105,12 @@ fn read(contents:Vec<DirEntry>) -> String {
     else if command[0] == String::from("delete") {
         let check = !(read_to_string(format!("You are trying to delete {} (Y/n)>  ",file_path.as_os_str().display()).as_str()) == "n");
         if file_path.is_dir() && check{
-            std::process::Command::new("rm").arg("-r").arg(file_path.as_os_str().to_str().unwrap()).status().unwrap();
+            std::fs::remove_dir_all(file_path.as_os_str().to_str().unwrap()).unwrap();
         }
         if file_path.is_file() && check{
-            std::process::Command::new("rm").arg(file_path.as_os_str().to_str().unwrap()).status().unwrap();
+            std::fs::remove_file(file_path.as_os_str().to_str().unwrap()).unwrap();
         }
+
     }
 
     else if command[0] == String::from("command") {
@@ -133,11 +132,17 @@ fn read(contents:Vec<DirEntry>) -> String {
 
     }
 
-    else if command[0] == String::from("copy") {
-        cli_clipboard::ClipboardContext::new().unwrap().set_contents(file_path.as_os_str().to_str().unwrap().to_string()).unwrap();
-    }
+    else if command[0] == String::from("select") || command[0] == String::from("slc"){
+        let mut select = SELECTED_DIR.lock().unwrap();
+        *select = file_path.as_os_str().to_str().unwrap().to_string();
+        }
     else if command[0] == String::from("paste") {
-        std::process::Command::new("cp").arg(cli_clipboard::get_contents().unwrap()).arg(current_dir).output().unwrap();
+        let select = SELECTED_DIR.lock().unwrap();
+        std::process::Command::new("cp").arg("-r").arg(select.clone()).arg(current_dir).output().unwrap();
+    }
+    else if command[0] == String::from("move") {
+        let select = SELECTED_DIR.lock().unwrap();
+        std::process::Command::new("mv").arg(select.clone()).arg(current_dir).output().unwrap();
     }
     else if command[0] == String::from("open") {
         std::thread::spawn(|| {std::process::Command::new("kitty").arg("--directory").arg(current_dir).output().unwrap()});
@@ -145,8 +150,16 @@ fn read(contents:Vec<DirEntry>) -> String {
 
     else if command[0] == String::from("execute") {
         std::process::Command::new(format!("./{}", file_path.as_os_str().to_str().unwrap())).status().unwrap();
-        
-        
+    }
+    else if command[0] == String::from("rename") {
+        let new_file_name = read_to_string("New File Name>>>     ");
+        if new_file_name.len() != 0 {
+            std::fs::rename(file_path, new_file_name).unwrap();
+        }  
+    }
+    else if command[0] == String::from("help") {
+        println!("cd - Changes Directory\ndelete - Deletes a file\nselect - Selects file for other operations\npaste - Pastes Selected File to Open Path\nopen - Opens Location in new terminal\nzip/unzip - Zips or Unzips zip files");
+        read_to_string("Press Enter To Continue:");
     }
 
     else if command[0] == String::from("zip") {
@@ -157,7 +170,7 @@ fn read(contents:Vec<DirEntry>) -> String {
         if command.get(2).is_some() {
             if command[2] == String::from("-n") {
                new_unzip_folder = file_path.as_os_str().to_str().unwrap().trim_end_matches(".zip");
-               std::process::Command::new("mkdir").arg(new_unzip_folder).status().unwrap();
+               std::fs::create_dir(new_unzip_folder).unwrap();
             }
             else {
                 new_unzip_folder = &current_dir
@@ -166,9 +179,7 @@ fn read(contents:Vec<DirEntry>) -> String {
         else {
             new_unzip_folder = &current_dir
         }
-         
-        
-        std::process::Command::new("unzip").arg(file_path.clone()).arg("-d").arg(new_unzip_folder).status().unwrap();
+        zip::ZipArchive::new(std::fs::File::open(file_path.clone()).unwrap()).unwrap().extract(new_unzip_folder).unwrap();
     }
     else {
         let mut formated_term_command:Vec<String> = Vec::new();
